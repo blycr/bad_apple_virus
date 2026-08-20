@@ -17,32 +17,50 @@ Video demonstration:
 > it is a self-contained rewrite that paints its own black backdrop and works
 > on any wallpaper.
 
-## Maintenance update (2026): why it needed fixing
+## Maintenance update (2026): why the picture was garbage, and what was fixed
 
-The original's neatest trick — reinterpreting `boxes.bin` as a slice of
-`Option<WinCoords>`, where the `NonZeroU8` niche makes `None` (the frame
-separator) free of cost — is **not portable across rustc versions**. The
-compiler is allowed to reorder the fields of a `#[repr(packed)]` struct when it
-applies the niche optimization, and modern rustc does: the in-memory layout
-becomes `[w, h, x, y]` instead of the declared `[x, y, w, h]`. The result is
-that every box is scrambled and any `x=0` box is misread as a frame separator,
-so the video comes out as garbage. The fix is a single attribute: the struct is
-now `#[repr(C)]`, which fixes the layout in declaration order while keeping the
-4-byte `Option<WinCoords>` with the free `None` discriminant — the trick itself
-is unchanged.
+On modern toolchains and on machines like this one (Windows 10/11, 125% DPI,
+virtual/remote audio drivers, non-black wallpaper), the original binary
+rendered **no coherent picture at all** — no shapes, no video. Four compounding
+root causes were found:
 
-Two environment-related bugs were also fixed:
+1. **The `Option<WinCoords>` niche trick is not portable across rustc
+   versions — the fatal one.** The original reinterpreted `boxes.bin` as a
+   slice of `Option<WinCoords>`, relying on `#[repr(packed)]` keeping the
+   fields in declaration order. The compiler is free to reorder fields when it
+   applies the niche optimization, and modern rustc produces `[w, h, x, y]`
+   instead of `[x, y, w, h]`. Measured behaviour: the bytes `[0,1,2,3]` — a
+   perfectly valid box with `x=0` — decode as `None` (a frame separator), so
+   every frame lost its left column and the whole box stream was misaligned;
+   window sizes and positions became garbage (e.g. windows with `x` stuck at 1
+   and zero-height rects). The original happened to work on the author's older
+   compiler purely by luck of the layout. Fix: `#[repr(C)]` — a single
+   attribute that fixes the layout in declaration order while keeping the
+   4-byte `Option<WinCoords>` and the free `None` discriminant.
 
-- The frame timeline used to be driven by the audio backend's clock
-  (kira/cpal). On machines with virtual or remote audio devices that clock can
-  be wildly unstable, freezing or randomly jumping the video. The timeline is
-  now a plain wall clock at 30fps; audio plays best-effort, and the video
-  keeps playing even if no audio device exists at all.
-- `SWP_NOREDRAW` on a *resized* window keeps the window's stale old-size
-  surface on modern Windows/DWM, freezing the picture into the previous
-  frame's rectangles. `SWP_NOREDRAW` is now only used for pure moves (where it
-  is still a real win); resizes and show/hide transitions repaint as usual.
-  The fills are solid, so the extra repaints are cheap.
+2. **The audio clock is unreliable in virtual-audio environments.** The frame
+   timeline used to be driven by kira/cpal's audio clock. On this machine
+   (virtual audio device) that clock advanced at random speeds — the video
+   could sit on the first frames for 25+ seconds. Fix: drive the 30 fps
+   timeline from a wall clock (`std::time::Instant`); audio still plays, it
+   just no longer clocks the video.
+
+3. **Video start was delayed by audio initialization.** The virtual audio
+   device took 0–5 seconds (varying per run) to initialize, and the timeline
+   was started *after* it, so the video began late. Fix: the wall-clock
+   reference is taken before audio initialization, and audio is best-effort —
+   the video keeps playing even if the audio device is missing or broken.
+
+4. **Windows kept stale surfaces instead of repainting.** `SWP_NOREDRAW` on a
+   *resized* window keeps the window's stale old-size surface on modern
+   Windows/DWM, freezing the picture into the previous frame's rectangles (in
+   the rewrite this showed up as windows painting only their creation-size
+   "sliver"). Fix: `SWP_NOREDRAW` is now used only for pure moves (where it is
+   still a real win); resizes and show/hide transitions repaint as usual. The
+   fills are solid, so the extra repaints are cheap.
+
+Plus one display-fit fix:
+
 - The source video is 4:3. The original code stretched it to fill the work
   area (two independent per-axis ratios), which distorts the picture on 16:9
   screens. It now uses a single cell size (the smaller fit) and centers the
