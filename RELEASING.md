@@ -28,6 +28,31 @@ Then update the release notes to print the checksum and how to verify:
 - Windows (PowerShell): `Get-FileHash <name>.exe -Algorithm SHA256`
 - Linux/macOS: `sha256sum -c SHA256SUMS`
 
+## Signing (optional — self-signed, simplest)
+
+Sign with a self-signed dev certificate: free, local, no SDK needed. It adds
+tamper/integrity verification only — Windows and antivirus do **not** trust a
+self-signed root, so it does not reduce AV false-positive flags; the
+`SHA256SUMS` file remains the authoritative check.
+
+```powershell
+# one-time: create the certificate (10 years)
+$cert = New-SelfSignedCertificate -Type CodeSigningCert `
+  -Subject "CN=Bad Apple Windows Video (dev)" `
+  -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(10)
+
+# per release: sign each binary (public timestamp server)
+Set-AuthenticodeSignature -FilePath target\release\<name>.exe `
+  -Certificate $cert -HashAlgorithm SHA256 `
+  -TimestampServer 'http://timestamp.digicert.com'
+
+# verify (expected: UnknownError "untrusted root" — normal for self-signed)
+Get-AuthenticodeSignature target\release\<name>.exe
+```
+
+**Signing changes the file bytes** — regenerate `SHA256SUMS` *after* signing
+and upload the signed binary.
+
 ## Notes for this machine
 
 - **Antivirus quarantines downloads to temp directories.** On this machine
