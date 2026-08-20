@@ -1,53 +1,32 @@
 [package]
-name = "bad_apple"
+name = "bad_apple_win"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Bad Apple played with real Windows windows as pixels (rewrite, adapted to this machine)"
 
 [dependencies]
 include-bytes-zstd = "0.1.0"
 kira = { version = "0.8.4", default-features = false, features = ["cpal", "ogg"] }
-lazy_static = "1.4.0"
 
 [dependencies.windows]
 version = "0.42.0"
 features = [
     # core
     "Win32_Foundation",
-    # window creation
+    # window creation / message loop / DPI / hotkey
     "Win32_UI_WindowsAndMessaging",
+    # RegisterHotKey / VK_ESCAPE
+    "Win32_UI_Input_KeyboardAndMouse",
+    # background brushes
     "Win32_Graphics_Gdi",
-    # commandline helper
+    # console attach for println output
     "Win32_System_Console",
-    # IMAGE_DOS_HEADER
-    "Win32_System_SystemServices",
-    # IProgressDialog
-    "Win32_UI_Shell",
-    "Win32_System_Com",
-    # GetCurrentThreadId
-    "Win32_System_Threading",
-    # GetModuleHandleA
+    # GetModuleHandleW
     "Win32_System_LibraryLoader",
-]
-
-# used for hooking functions with more ease
-[dependencies.windows-sys]
-version = "0.42.0"
-features = [
-    # core
-    "Win32_Foundation",
-    # CreateWindowExA
-    "Win32_UI_WindowsAndMessaging",
 ]
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1.12"
-
-[package.metadata.winres]
-FileDescription = "badapple"
-ProductName = ""
-CompanyName = "https://github.com/mon"
 
 [profile.release]
 strip = true

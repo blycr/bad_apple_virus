@@ -1,94 +1,99 @@
-# Bad Apple but it's a Windows virus
+# Bad Apple!! — windows-as-video, rewritten for modern Windows
 
-A high-performance (I've never seen _anything_ like this run in realtime before)
-rendition of Bad Apple, using Windows windows as the video surface.
+This branch is a from-scratch reimplementation of the idea behind
+[*Bad Apple but it's a Windows virus*](https://github.com/mon/bad_apple_virus)
+(the original project lives on the `master` branch of this repository). It
+borrows only the *concept* — render the 64×48 video grid as real, topmost
+Windows windows, one window per rectangular "box" of each frame — and is built
+to work reliably on a modern, high-DPI Windows machine with **any wallpaper**.
 
-It's not _actually_ a virus, but it is reminiscent of the viruses of old that
-were more of a nuisance than anything.
+## What's different from the original
 
-Video demonstration:
+| | `master` (original) | `bad-apple-win` (this branch) |
+|---|---|---|
+| Black parts of the video | your desktop (needs a black wallpaper) | a full-screen black backdrop window (works on any wallpaper) |
+| DPI | DPI-unaware (logical pixels, work area only) | PerMonitorV2-aware, physical pixels |
+| Screen coverage | work area (taskbar stays visible) | full screen, including the taskbar area |
+| Aspect ratio | stretched to the work area | preserved 4:3, centered with letterbox bars |
+| Tiles | bordered windows (`WS_OVERLAPPEDWINDOW`, needs a FUDGE offset) | borderless solid tiles (`WS_POPUP`) |
+| Quit | none (runs until the video ends) | press **Escape** |
+| Frame timeline | wall clock at 30fps (see below) | wall clock at 30fps (see below) |
+| `boxes.bin` parsing | explicit byte parsing (see below) | explicit byte parsing (see below) |
 
-[![Flandre Scarlet made out of windows](https://img.youtube.com/vi/EZpZwunMzuE/0.jpg)](https://www.youtube.com/watch?v=EZpZwunMzuE)
+## Build & run
 
-> **Heads-up**: this version draws the *white* parts of the video as windows
-> over your desktop, so the desktop needs to be **black** (a solid black
-> wallpaper) for the picture to read. If you can't change the wallpaper, or
-> you run a high-DPI/remote setup, use the **`bad-apple-win`** branch instead:
-> it is a self-contained rewrite that paints its own black backdrop and works
-> on any wallpaper.
+```powershell
+cargo build --release
+.\target\release\bad_apple_win.exe
+```
 
-## Maintenance update (2026): why it needed fixing
+The exe plays the full ~3:39 Bad Apple!! PV: 155 tile windows + a black
+backdrop, at 30 fps. Press **Escape** to quit (or let it finish).
 
-The original's neatest trick — reinterpreting `boxes.bin` as a slice of
-`Option<WinCoords>`, where the `NonZeroU8` niche makes `None` (the frame
-separator) free of cost — is **not portable across rustc versions**. The
-compiler is allowed to reorder the fields of a `#[repr(packed)]` struct when it
-applies the niche optimization, and modern rustc does: the in-memory layout
-becomes `[w, h, x, y]` instead of the declared `[x, y, w, h]`. The result is
-that every box is scrambled and any `x=0` box is misread as a frame separator,
-so the video comes out as garbage. This repo now parses the bytes explicitly
-(always correct, and still fast: ~300k 4-byte entries).
+## Why both projects needed the same two fixes
 
-Two environment-related bugs were also fixed:
+1. **The `Option<WinCoords>` niche trick is not portable.** The original
+   reinterpreted the raw bytes of `boxes.bin` as `&[Option<WinCoords]>`,
+   relying on the compiler keeping `#[repr(packed)]` fields in declaration
+   order and storing the `None` discriminant in the last byte. Modern rustc
+   reorders the fields for the niche optimization (layout becomes
+   `[w, h, x, y]`), which scrambles every box and misreads `x=0` boxes as
+   frame separators — the video renders as garbage. Both implementations now
+   parse `boxes.bin` byte-by-byte: `(0,0,0,0)` separates frames, everything
+   else is `(x, y, w, h)`. Always correct, still ~300k cheap entries.
 
-- The frame timeline used to be driven by the audio backend's clock
-  (kira/cpal). On machines with virtual or remote audio devices that clock can
-  be wildly unstable, freezing or randomly jumping the video. The timeline is
-  now a plain wall clock at 30fps; audio plays best-effort, and the video
-  keeps playing even if no audio device exists at all.
-- `SWP_NOREDRAW` was supposed to keep windows' surfaces in sync cheaply. On
-  modern Windows/DWM a window that is moved/resized without being redrawn
-  keeps its **old** surface, so the picture froze into the previous frame's
-  rectangles. Repaints are now always allowed — the fills are solid, the cost
-  is negligible.
+2. **The audio clock is unreliable on this class of machine.** The original
+   drove the 30fps frame timeline from kira/cpal's audio clock. On machines
+   with virtual or remote audio devices (e.g. GameViewer/OrayIdd virtual
+   display + audio drivers) that clock can freeze or jump randomly, so the
+   video would crawl or skip. Both implementations now use a plain
+   `std::time::Instant` wall clock for the timeline and play audio
+   best-effort: the video stays smooth even if audio is missing, late, or
+   broken. Audio initialization is also non-fatal (it can take seconds on
+   virtual devices).
 
-## Why is it so performant?
+3. **`SWP_NOREDRAW` leaves stale window surfaces** (original only): on modern
+   Windows/DWM a window moved/resized without a redraw keeps its old
+   rectangles on screen, freezing the picture. Repaints are always allowed in
+   both implementations; the fills are solid so the cost is negligible.
 
-- `DeferWindowPos` - even the most naive of projects can go from 1fps to 15fps
-  by using this wonderful batched API instead of `SetWindowPos`.
-- `WS_EX_TOOLWINDOW` to remove the taskbar entry
-- Only showing/hiding/moving windows that actually need it (dirty tracking)
-- Rust is *blazing fast*, don't you know?
+## How this implementation works
 
-## Could it be faster?
+- `assets/boxes.bin` is the pre-processed video: for every frame, a list of
+  `(x, y, w, h)` rectangles (in a 64×48 grid) that cover the white regions,
+  produced by a greedy box-fitter (see `bad apple.py`). Frames are separated
+  by `(0,0,0,0)`. It is embedded at compile time with
+  `include_bytes_zstd!("assets/boxes.bin", 22)` (zstd level-22, decompressed
+  at startup in a few ms).
+- A full-screen black `WS_POPUP|WS_VISIBLE|WS_EX_TOPMOST` backdrop window is
+  created first; the video's black parts are just the backdrop.
+- 155 borderless white tile windows (`WS_POPUP`, class background brush
+  `COLORREF(0x00FFFFFF)`) are created hidden, then per frame each tile is
+  moved/sized/shown or hidden to match one box of the current frame.
+- All window moves are batched with `BeginDeferWindowPos` /
+  `DeferWindowPos` / `EndDeferWindowPos`, and dirty flags avoid touching
+  unchanged windows — the same batching trick as the original.
+- Geometry: with a PerMonitorV2 manifest the app sees physical pixels.
+  `cell = min(scr_w / 64, scr_h / 48)`, content is `cell*64 × cell*48`,
+  centered: `offset = ((scr_w - content_w) / 2, (scr_h - content_h) / 2)`.
+- A `WM_TIMER` (16 ms) polls the wall clock and advances the timeline at
+  exactly 30 fps, skipping missed frames instead of lagging behind.
+- `RegisterHotKey` binds **Escape** to post `WM_QUIT`.
 
-I suspect that choosing which windows to move/resize, such that each is resized
-as little as possible, can increase performance - currently, the windows are just
-used from largest to smallest, which can result in some location jitter as they
-fit into different indexes.
+## Verification
 
-## Future work
+The screenshots-vs-source-data pipeline used to validate this on the target
+machine (1920×1080 @ 125 % DPI, RTX 3060, Windows 10/11):
 
-All of these I have done already in small tests, but they're both difficult to
-make performant (copy dialogs are particularly slow), and difficult to arrange
-into a pleasing display.
+```powershell
+powershell -ExecutionPolicy Bypass -File .\capture_final.ps1   # captures at 6/12/20 s
+python .\compare_final.py                                       # best-match against boxes.bin
+```
 
-- Spawning `MessageBoxA` windows and taking their handle (thus avoiding the need
-to replicate the layout of `MessageBoxA` for each version of Windows you run
-on)
-- Spawning Vista file copy dialogs using `IProgressDialog`
-- Arranging windows in rolling sine waves, circles, etc
+On this machine the captures match the source frames essentially exactly
+(12 s and 20 s: 0.000 mismatch; 6 s: 0.023 startup noise).
 
-All of these I have not tried yet, but would be great additions:
-- Water physics using hundreds of scroll bars
-- Basic hard-body physics between windows
-- Error noises synced with the audio (could just pre-render...)
-- Notification bubbles
-- Windows in the taskbar to show text (if the user has large taskbar buttons
-  enabled)
-- A large variety of error messages to delight the user with
+## Credits
 
-## Building and such
-
-Should be fine to just `cargo build --release`.
-
-Look at `bad apple.py` for the pre-processing to take an input video and turn it
-into `boxes.bin`, a space-optimized representation of the window bounds for each
-frame. The script is jank, don't come complaining.
-
-Check the PRs for some forks that improve the python script to be easier to run.
-
-## Why's the repo archived?
-
-I simply don't have the bandwidth to respond to questions and merge PRs for this little
-project I threw out into the world. Feel free to fork it and make it do cool things!
+- Original idea, `boxes.bin` pipeline and the batching technique: [mon / bad_apple_virus](https://github.com/mon/bad_apple_virus)
+- This rewrite and the modern-toolchain fixes: blycr
