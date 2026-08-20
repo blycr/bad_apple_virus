@@ -10,14 +10,44 @@ Video demonstration:
 
 [![Flandre Scarlet made out of windows](https://img.youtube.com/vi/EZpZwunMzuE/0.jpg)](https://www.youtube.com/watch?v=EZpZwunMzuE)
 
+> **Heads-up**: this version draws the *white* parts of the video as windows
+> over your desktop, so the desktop needs to be **black** (a solid black
+> wallpaper) for the picture to read. If you can't change the wallpaper, or
+> you run a high-DPI/remote setup, use the **`bad-apple-win`** branch instead:
+> it is a self-contained rewrite that paints its own black backdrop and works
+> on any wallpaper.
+
+## Maintenance update (2026): why it needed fixing
+
+The original's neatest trick — reinterpreting `boxes.bin` as a slice of
+`Option<WinCoords>`, where the `NonZeroU8` niche makes `None` (the frame
+separator) free of cost — is **not portable across rustc versions**. The
+compiler is allowed to reorder the fields of a `#[repr(packed)]` struct when it
+applies the niche optimization, and modern rustc does: the in-memory layout
+becomes `[w, h, x, y]` instead of the declared `[x, y, w, h]`. The result is
+that every box is scrambled and any `x=0` box is misread as a frame separator,
+so the video comes out as garbage. This repo now parses the bytes explicitly
+(always correct, and still fast: ~300k 4-byte entries).
+
+Two environment-related bugs were also fixed:
+
+- The frame timeline used to be driven by the audio backend's clock
+  (kira/cpal). On machines with virtual or remote audio devices that clock can
+  be wildly unstable, freezing or randomly jumping the video. The timeline is
+  now a plain wall clock at 30fps; audio plays best-effort, and the video
+  keeps playing even if no audio device exists at all.
+- `SWP_NOREDRAW` was supposed to keep windows' surfaces in sync cheaply. On
+  modern Windows/DWM a window that is moved/resized without being redrawn
+  keeps its **old** surface, so the picture froze into the previous frame's
+  rectangles. Repaints are now always allowed — the fills are solid, the cost
+  is negligible.
+
 ## Why is it so performant?
 
 - `DeferWindowPos` - even the most naive of projects can go from 1fps to 15fps
   by using this wonderful batched API instead of `SetWindowPos`.
 - `WS_EX_TOOLWINDOW` to remove the taskbar entry
-- `SWP_NOREDRAW` when moving/resizing windows
-- Optimised code that only shows/hides/moves windows that need
-  showing/hiding/moving
+- Only showing/hiding/moving windows that actually need it (dirty tracking)
 - Rust is *blazing fast*, don't you know?
 
 ## Could it be faster?

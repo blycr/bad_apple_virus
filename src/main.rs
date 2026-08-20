@@ -5,7 +5,6 @@ use std::num::NonZeroU8;
 use std::time::Instant;
 
 use include_bytes_zstd::include_bytes_zstd;
-use kira::clock::ClockSpeed;
 use kira::{
     manager::{backend::DefaultBackend, AudioManager, AudioManagerSettings},
     sound::streaming::{StreamingSoundData, StreamingSoundSettings},
@@ -154,11 +153,12 @@ impl DeferredWindow {
             } else {
                 SWP_HIDEWINDOW
             };
-        } else {
-            // if we're showing a hidden MessageBox or Progress window, we need
-            // to redraw or it is often stale
-            flags |= SWP_NOREDRAW;
         }
+        // NOTE: no SWP_NOREDRAW. On modern Windows/DWM, a window that is
+        // moved/resized without being redrawn keeps its stale (old-size)
+        // surface, so the picture freezes into the previous frame's
+        // rectangles. The extra repaints are cheap (solid fills) and keep the
+        // video correct.
 
         self.pos_stale = false;
         self.sz_stale = false;
@@ -250,12 +250,30 @@ fn main() {
     register_window_class();
 
     let frames_raw = include_bytes_zstd!("assets/boxes.bin", 22);
-    let frames: &[Option<WinCoords>] = unsafe {
-        std::slice::from_raw_parts(
-            frames_raw.as_ptr() as *const _,
-            frames_raw.len() / std::mem::size_of::<WinCoords>(),
-        )
-    };
+
+    // Parse the box stream explicitly. NOTE: we must NOT reinterpret the raw
+    // bytes as `&[Option<WinCoords>]` -- the compiler is free to reorder
+    // (packed) struct fields when applying the niche optimization, so the
+    // in-memory layout of `Option<WinCoords>` is NOT guaranteed to be
+    // `[x,y,w,h]` on every rustc version. On modern rustc the fields end up
+    // reordered, which scrambles every box and turns x=0 boxes into spurious
+    // frame separators. Explicit parsing is always correct.
+    // (0,0,0,0) separates frames.
+    let mut parsed: Vec<Option<WinCoords>> = Vec::with_capacity(frames_raw.len() / 4);
+    for chunk in frames_raw.chunks_exact(4) {
+        let (x, y, w, h) = (chunk[0], chunk[1], chunk[2], chunk[3]);
+        if (x, y, w, h) == (0, 0, 0, 0) {
+            parsed.push(None);
+        } else {
+            parsed.push(Some(WinCoords {
+                x,
+                y,
+                w: NonZeroU8::new(w).expect("box width must be non-zero"),
+                h: NonZeroU8::new(h).expect("box height must be non-zero"),
+            }));
+        }
+    }
+    let frames = parsed;
     let mut frames_iter = frames.iter();
     // println!("{:?}", frames);
 
@@ -269,21 +287,30 @@ fn main() {
 
         let mut collection = WindowCollection::new(wins);
 
-        // Audio playback
+        // Audio playback (best-effort). The video timeline uses a wall clock
+        // instead of the audio clock: the audio backend's clock can be wildly
+        // unreliable on virtual/remote audio devices, and the show must stay
+        // smooth even if audio is missing or late.
+        let playback_start = Instant::now();
         let cursor = Cursor::new(include_bytes!("../assets/bad apple.ogg"));
-        let mut manager =
-            AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).unwrap();
-        let clock = manager
-            .add_clock(ClockSpeed::TicksPerSecond(30f64))
-            .unwrap();
-        let mut next_tick = clock.time().ticks;
-        let sound_data = StreamingSoundData::from_cursor(
-            cursor,
-            StreamingSoundSettings::new().start_time(clock.time()),
-        )
-        .unwrap();
-        manager.play(sound_data).unwrap();
-        clock.start().unwrap();
+        // Kept alive for the whole run (drop guard keeps the audio backend
+        // going); the underscore name suppresses "never used" warnings.
+        let mut _audio_manager: Option<AudioManager<DefaultBackend>> = None;
+        match AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()) {
+            Ok(mut manager) => {
+                match StreamingSoundData::from_cursor(cursor, StreamingSoundSettings::new()) {
+                    Ok(sound_data) => {
+                        if manager.play(sound_data).is_err() {
+                            println!("audio: failed to start playback (video only)");
+                        }
+                    }
+                    Err(_) => println!("audio: failed to decode ogg (video only)"),
+                }
+                _audio_manager = Some(manager); // keep the audio backend alive
+            }
+            Err(_) => println!("audio: no audio backend available (video only)"),
+        }
+        let mut next_tick: u64 = 0;
 
         // println!("Showing windows...");
         // let now = Instant::now();
@@ -312,13 +339,13 @@ fn main() {
                     println!("WM_QUIT");
                     break;
                 } else if msg.message == WM_TIMER {
-                    let current_tick = clock.time().ticks;
-                    // nothing to do yet, eg next_tick = 1, current_tick = 0
-                    if next_tick > current_tick {
+                    let target = (playback_start.elapsed().as_secs_f64() * 30.0) as u64;
+                    // nothing to do yet, eg next_tick = 1, target = 0
+                    if next_tick > target {
                         continue;
                     }
-                    // skip any frames that we missed, eg next_tick = 2, current_tick = 3
-                    while current_tick > next_tick {
+                    // skip any frames that we missed, eg next_tick = 2, target = 3
+                    while target > next_tick {
                         loop {
                             let Some(val) = frames_iter.next() else {
                                 break 'outer;
