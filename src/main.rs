@@ -5,7 +5,6 @@ use std::num::NonZeroU8;
 use std::time::Instant;
 
 use include_bytes_zstd::include_bytes_zstd;
-use kira::clock::ClockSpeed;
 use kira::{
     manager::{backend::DefaultBackend, AudioManager, AudioManagerSettings},
     sound::streaming::{StreamingSoundData, StreamingSoundSettings},
@@ -154,11 +153,14 @@ impl DeferredWindow {
             } else {
                 SWP_HIDEWINDOW
             };
-        } else {
-            // if we're showing a hidden MessageBox or Progress window, we need
-            // to redraw or it is often stale
+        } else if !self.sz_stale {
+            // Pure move: keep the existing surface, no repaint needed.
             flags |= SWP_NOREDRAW;
         }
+        // NOTE: resizes (and shows) deliberately repaint. On modern
+        // Windows/DWM a window resized with SWP_NOREDRAW keeps its stale
+        // old-size surface, freezing the picture into the previous frame's
+        // rectangles. Resizes are solid fills; the repaint is cheap.
 
         self.pos_stale = false;
         self.sz_stale = false;
@@ -230,7 +232,14 @@ impl WindowCollection {
 
 // Focus on small binary size: width/height are NonZero so Option<>
 // becomes free!
-#[repr(packed)]
+//
+// repr(C) is required for portability: the compiler is free to reorder the
+// fields of a `#[repr(packed)]` struct when applying the niche optimization
+// (modern rustc produces [w,h,x,y] instead of [x,y,w,h], which scrambles
+// every box and turns x=0 boxes into spurious frame separators). repr(C)
+// fixes the layout in declaration order while keeping the 4-byte
+// Option<WinCoords> with the free None discriminant.
+#[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct WinCoords {
     x: u8,
@@ -269,21 +278,30 @@ fn main() {
 
         let mut collection = WindowCollection::new(wins);
 
-        // Audio playback
+        // Audio playback (best-effort). The video timeline uses a wall clock
+        // instead of the audio clock: the audio backend's clock can be wildly
+        // unreliable on virtual/remote audio devices, and the show must stay
+        // smooth even if audio is missing or late.
+        let playback_start = Instant::now();
         let cursor = Cursor::new(include_bytes!("../assets/bad apple.ogg"));
-        let mut manager =
-            AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).unwrap();
-        let clock = manager
-            .add_clock(ClockSpeed::TicksPerSecond(30f64))
-            .unwrap();
-        let mut next_tick = clock.time().ticks;
-        let sound_data = StreamingSoundData::from_cursor(
-            cursor,
-            StreamingSoundSettings::new().start_time(clock.time()),
-        )
-        .unwrap();
-        manager.play(sound_data).unwrap();
-        clock.start().unwrap();
+        // Kept alive for the whole run (drop guard keeps the audio backend
+        // going); the underscore name suppresses "never used" warnings.
+        let mut _audio_manager: Option<AudioManager<DefaultBackend>> = None;
+        match AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()) {
+            Ok(mut manager) => {
+                match StreamingSoundData::from_cursor(cursor, StreamingSoundSettings::new()) {
+                    Ok(sound_data) => {
+                        if manager.play(sound_data).is_err() {
+                            println!("audio: failed to start playback (video only)");
+                        }
+                    }
+                    Err(_) => println!("audio: failed to decode ogg (video only)"),
+                }
+                _audio_manager = Some(manager); // keep the audio backend alive
+            }
+            Err(_) => println!("audio: no audio backend available (video only)"),
+        }
+        let mut next_tick: u64 = 0;
 
         // println!("Showing windows...");
         // let now = Instant::now();
@@ -312,13 +330,13 @@ fn main() {
                     println!("WM_QUIT");
                     break;
                 } else if msg.message == WM_TIMER {
-                    let current_tick = clock.time().ticks;
-                    // nothing to do yet, eg next_tick = 1, current_tick = 0
-                    if next_tick > current_tick {
+                    let target = (playback_start.elapsed().as_secs_f64() * 30.0) as u64;
+                    // nothing to do yet, eg next_tick = 1, target = 0
+                    if next_tick > target {
                         continue;
                     }
-                    // skip any frames that we missed, eg next_tick = 2, current_tick = 3
-                    while current_tick > next_tick {
+                    // skip any frames that we missed, eg next_tick = 2, target = 3
+                    while target > next_tick {
                         loop {
                             let Some(val) = frames_iter.next() else {
                                 break 'outer;
