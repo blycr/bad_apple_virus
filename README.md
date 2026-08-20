@@ -2,14 +2,14 @@
 
 This branch is a from-scratch reimplementation of the idea behind
 [*Bad Apple but it's a Windows virus*](https://github.com/mon/bad_apple_virus)
-(the original project lives on the `master` branch of this repository). It
+(the original project lives on the `main` branch of this repository). It
 borrows only the *concept* — render the 64×48 video grid as real, topmost
 Windows windows, one window per rectangular "box" of each frame — and is built
 to work reliably on a modern, high-DPI Windows machine with **any wallpaper**.
 
 ## What's different from the original
 
-| | `master` (original) | `rewrite` (this branch) |
+| | `main` (original) | `rewrite` (this branch) |
 |---|---|---|
 | Black parts of the video | your desktop (needs a black wallpaper) | a full-screen black backdrop window (works on any wallpaper) |
 | DPI | DPI-unaware (logical pixels, work area only) | PerMonitorV2-aware, physical pixels |
@@ -35,7 +35,7 @@ backdrop, at 30 fps. Press **Escape** to quit (or let it finish).
 On modern toolchains and on machines like this one (Windows 10/11, 125% DPI,
 virtual/remote audio drivers, non-black wallpaper), the original binary
 rendered **no coherent picture at all** — no shapes, no video. Four
-compounding root causes were found; both this rewrite and the `master` branch
+compounding root causes were found; both this rewrite and the `main` branch
 fix them:
 
 1. **The `Option<WinCoords>` niche trick is not portable across rustc
@@ -50,7 +50,7 @@ fix them:
    and zero-height rects). The original happened to work on the author's older
    compiler purely by luck of the layout. This rewrite parses `boxes.bin`
    byte-by-byte (`(0,0,0,0)` separates frames, everything else is
-   `(x, y, w, h)`) — always correct, still ~300k cheap entries. The `master`
+   `(x, y, w, h)`) — always correct, still ~300k cheap entries. The `main`
    branch instead keeps the trick and fixes the layout with `#[repr(C)]`.
 
 2. **The audio clock is unreliable in virtual-audio environments.** The
@@ -74,7 +74,7 @@ fix them:
    in one batched `DeferWindowPos`, and the suppressed repaints left the rest
    of the window black. Fix: no `SWP_NOREDRAW` at all — resizes, moves and
    show/hide transitions all repaint (solid fills, negligible cost). The
-   `master` branch keeps `SWP_NOREDRAW` for pure moves only.
+   `main` branch keeps `SWP_NOREDRAW` for pure moves only.
 
 Plus one display-fit fix in both: the source video is 4:3, and both
 implementations preserve that aspect (single cell size, centered content with
