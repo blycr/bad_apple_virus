@@ -1,6 +1,6 @@
 # Release checklist
 
-How to cut a new release for this repository. Both branches (`master` = the
+How to cut a new release for this repository. Both branches (`main` = the
 original project, `rewrite` = the self-contained rewrite) follow the same
 process.
 
@@ -42,5 +42,5 @@ Then update the release notes to print the checksum and how to verify:
 
 ## Tag naming
 
-- Original (master): `v1.0.0`, `v1.0.1`, ... (or `v<major>.<minor>.<patch>`)
+- Original (main): `v1.0.0`, `v1.0.1`, ... (or `v<major>.<minor>.<patch>`)
 - Rewrite (rewrite branch): `v1.0.0-rewrite`, ... (suffix `-rewrite`)
