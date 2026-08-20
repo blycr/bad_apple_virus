@@ -9,7 +9,7 @@ to work reliably on a modern, high-DPI Windows machine with **any wallpaper**.
 
 ## What's different from the original
 
-| | `master` (original) | `bad-apple-win` (this branch) |
+| | `master` (original) | `rewrite` (this branch) |
 |---|---|---|
 | Black parts of the video | your desktop (needs a black wallpaper) | a full-screen black backdrop window (works on any wallpaper) |
 | DPI | DPI-unaware (logical pixels, work area only) | PerMonitorV2-aware, physical pixels |
