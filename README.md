@@ -43,6 +43,10 @@ Two environment-related bugs were also fixed:
   frame's rectangles. `SWP_NOREDRAW` is now only used for pure moves (where it
   is still a real win); resizes and show/hide transitions repaint as usual.
   The fills are solid, so the extra repaints are cheap.
+- The source video is 4:3. The original code stretched it to fill the work
+  area (two independent per-axis ratios), which distorts the picture on 16:9
+  screens. It now uses a single cell size (the smaller fit) and centers the
+  content, preserving the 4:3 aspect with letterbox bars on wide screens.
 
 ## Why is it so performant?
 

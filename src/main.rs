@@ -315,8 +315,14 @@ fn main() {
         // println!("Done! in {:?}", now.elapsed());
 
         let (usable_x, usable_y) = usable_monitor_sz();
-        let ratio_x = usable_x as f32 / BASE_WIDTH as f32;
-        let ratio_y = usable_y as f32 / BASE_HEIGHT as f32;
+        // Preserve the original video's 4:3 aspect ratio: use a single cell
+        // size for both axes (the smaller fit) and center the content in the
+        // work area. On a 16:9 screen this letterboxes horizontally instead of
+        // stretching the picture.
+        let ratio = (usable_x as f32 / BASE_WIDTH as f32)
+            .min(usable_y as f32 / BASE_HEIGHT as f32);
+        let offset_x = ((usable_x as f32 - ratio * BASE_WIDTH as f32) / 2.0) as i32;
+        let offset_y = ((usable_y as f32 - ratio * BASE_HEIGHT as f32) / 2.0) as i32;
 
         SetTimer(None, 1, 16, None); // nyquist 30fps
 
@@ -363,12 +369,12 @@ fn main() {
                         const FUDGE_X: i32 = 15;
                         const FUDGE_Y: i32 = 8;
                         win.set_pos(
-                            (coords.x as f32 * ratio_x) as i32,
-                            (coords.y as f32 * ratio_y) as i32,
+                            offset_x + (coords.x as f32 * ratio) as i32,
+                            offset_y + (coords.y as f32 * ratio) as i32,
                         );
                         win.set_sz(
-                            (coords.w.get() as f32 * ratio_x) as i32 + FUDGE_X,
-                            (coords.h.get() as f32 * ratio_y) as i32 + FUDGE_Y,
+                            (coords.w.get() as f32 * ratio) as i32 + FUDGE_X,
+                            (coords.h.get() as f32 * ratio) as i32 + FUDGE_Y,
                         );
                         win.set_visible(true);
                     }
