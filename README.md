@@ -13,7 +13,7 @@ Video demonstration:
 > **Heads-up**: this version draws the *white* parts of the video as windows
 > over your desktop, so the desktop needs to be **black** (a solid black
 > wallpaper) for the picture to read. If you can't change the wallpaper, or
-> you run a high-DPI/remote setup, use the **`bad-apple-win`** branch instead:
+> you run a high-DPI/remote setup, use the **`rewrite`** branch instead:
 > it is a self-contained rewrite that paints its own black backdrop and works
 > on any wallpaper.
 
