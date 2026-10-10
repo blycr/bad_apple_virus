@@ -19,14 +19,15 @@ pub struct Video {
 
 impl Video {
     pub fn from_legacy(bytes: &[u8]) -> Result<Self, &'static str> {
-        if !bytes.len().is_multiple_of(4) {
+        let (records, remainder) = bytes.as_chunks::<4>();
+        if !remainder.is_empty() {
             return Err("incomplete box record");
         }
         let mut frames = Vec::new();
         let mut frame = Vec::new();
         let mut terminated = true;
-        for c in bytes.chunks_exact(4) {
-            if c == [0, 0, 0, 0] {
+        for c in records {
+            if *c == [0, 0, 0, 0] {
                 frames.push(std::mem::take(&mut frame));
                 terminated = true;
             } else {
@@ -115,8 +116,8 @@ mod tests {
         assert_eq!(video.max_windows(), 155);
         let mut index = 0;
         let mut raw_frame = Vec::new();
-        for c in bytes.chunks_exact(4) {
-            if c == [0, 0, 0, 0] {
+        for c in bytes.as_chunks::<4>().0 {
+            if *c == [0, 0, 0, 0] {
                 assert_eq!(video.frame(index).unwrap(), raw_frame.as_slice());
                 raw_frame.clear();
                 index += 1;
@@ -133,6 +134,7 @@ mod tests {
 
     #[test]
     fn invalid_boxes_are_rejected_and_frame_count_stays_unchanged() {
+        assert!(Video::from_legacy(&[0, 0, 0, 0, 1]).is_err());
         assert!(Video::from_legacy(&[63, 0, 2, 1, 0, 0, 0, 0]).is_err());
         assert!(Video::from_legacy(&[0, 0, 1, 1]).is_err());
         let video = Video::from_legacy(&[0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0]).unwrap();
