@@ -1,0 +1,39 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install Rust tools
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add rustfmt clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked --all-targets
+      - name: Build
+        run: cargo build --locked --release
+      - name: Package
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: bad-apple-windows
+          path: |
+            target/dist/*.zip
+            target/dist/SHA256SUMS
+          if-no-files-found: error

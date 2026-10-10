@@ -1,7 +1,8 @@
 fn main() {
     #[cfg(all(target_os = "windows", target_env = "msvc"))]
     {
-        println!("cargo:rerun-if-changed=Cargo.toml"); // not sure why I need this
+        println!("cargo:rerun-if-changed=Cargo.toml");
+        println!("cargo:rerun-if-changed=apple.ico");
         let mut res = winres::WindowsResource::new();
 
         res.set_manifest(
@@ -19,6 +20,12 @@ fn main() {
                     />
                 </dependentAssembly>
             </dependency>
+            <application xmlns="urn:schemas-microsoft-com:asm.v3">
+                <windowsSettings>
+                    <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+                    <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+                </windowsSettings>
+            </application>
             </assembly>
         "#,
         );

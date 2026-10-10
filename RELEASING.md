@@ -1,71 +1,60 @@
-# Release checklist
+# Release process
 
-How to cut a new release for this repository. Both branches (`main` = the
-original project, `rewrite` = the self-contained rewrite) follow the same
-process.
+Starting with v1.1.0, `main` builds the only supported executable,
+`bad_apple.exe`. The former `rewrite` branch and separate `bad_apple_win`
+project are historical. Both visual modes ship in one Windows x64 package.
 
-## Mandatory: checksum file
+## Validate and package
 
-**Every release MUST ship a `SHA256SUMS` file** with the SHA-256 checksum of
-every executable asset. Without it, users have no way to verify that a
-downloaded binary was not corrupted or tampered with.
+On Windows with Rust stable and the MSVC/Windows SDK build tools:
 
 ```powershell
-# build first
-cargo build --release
-
-# generate the checksum file (lowercase, two spaces, filename as uploaded)
-(Get-FileHash target\release\<name>.exe -Algorithm SHA256).Hash.ToLower() |
-  ForEach-Object { "$_  <name>.exe" } | Set-Content SHA256SUMS -Encoding ascii
-
-# create the release with both the binary and the checksum file
-gh release create <tag> --title "<title>" --notes-file NOTES.md `
-  target\release\<name>.exe SHA256SUMS
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+cargo build --locked --release
+.\scripts\package.ps1
 ```
 
-Then update the release notes to print the checksum and how to verify:
+The script reads the package version from Cargo, creates
+`target/dist/bad-apple-windows-v<VERSION>.zip`, and generates `SHA256SUMS`
+for the executable and ZIP. The ZIP contains the executable, two launchers,
+README, LICENSE, and its executable checksum. Every release must include
+`SHA256SUMS`; repackage if the binary changes.
 
-- Windows (PowerShell): `Get-FileHash <name>.exe -Algorithm SHA256`
-- Linux/macOS: `sha256sum -c SHA256SUMS`
-
-## Signing (optional — self-signed, simplest)
-
-Sign with a self-signed dev certificate: free, local, no SDK needed. It adds
-tamper/integrity verification only — Windows and antivirus do **not** trust a
-self-signed root, so it does not reduce AV false-positive flags; the
-`SHA256SUMS` file remains the authoritative check.
+When an audio device is available, also run the zero-volume integration probes:
 
 ```powershell
-# one-time: create the certificate (10 years)
-$cert = New-SelfSignedCertificate -Type CodeSigningCert `
-  -Subject "CN=Bad Apple Windows Video (dev)" `
-  -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(10)
-
-# per release: sign each binary (public timestamp server)
-Set-AuthenticodeSignature -FilePath target\release\<name>.exe `
-  -Certificate $cert -HashAlgorithm SHA256 `
-  -TimestampServer 'http://timestamp.digicert.com'
-
-# verify (expected: UnknownError "untrusted root" — normal for self-signed)
-Get-AuthenticodeSignature target\release\<name>.exe
+cargo run --locked --release --example audio_probe -- 12
+cargo run --locked --release --example pause_probe
 ```
 
-**Signing changes the file bytes** — regenerate `SHA256SUMS` *after* signing
-and upload the signed binary.
+Manually verify both modes, Ctrl+Alt+F8 pause/resume, Ctrl+Alt+F9 exit,
+and shortcut release after exit. CI does not require an audio device.
 
-## Notes for this machine
+## Publish with GitHub CLI
 
-- **Antivirus quarantines downloads to temp directories.** On this machine
-  火绒/Huorong deletes `bad_apple.exe` (the original's binary) shortly after
-  it is downloaded into a temp folder, and it can also flag it when run. Do
-  not burn time on download-then-verify loops for that binary; the checksum
-  is computed from the freshly built artifact at upload time. Warn users in
-  the release notes to whitelist the binary.
-- Re-verify the uploaded asset's SHA-256 matches the local build before
-  publishing the checksum file (`gh release download` + `Get-FileHash`), or
-  simply trust the build artifact that was uploaded in the same command.
+Commit and push the validated sources first. Create the release against that
+exact commit, with a tag matching Cargo.toml. For example:
 
-## Tag naming
+```powershell
+gh auth setup-git
+git push origin main
+gh release create v1.1.0 --repo blycr/bad_apple_virus --target (git rev-parse HEAD) `
+  --title 'Bad Apple Windows Player v1.1.0' --notes-file RELEASE_NOTES.md `
+  target\release\bad_apple.exe target\dist\bad-apple-windows-v1.1.0.zip target\dist\SHA256SUMS
+```
 
-- Original (main): `v1.0.0`, `v1.0.1`, ... (or `v<major>.<minor>.<patch>`)
-- Rewrite (rewrite branch): `v1.0.0-rewrite`, ... (suffix `-rewrite`)
+Verify the uploaded filenames, sizes, and SHA-256 digests using the GitHub
+release-assets API, and check that the tag resolves to the committed sources.
+
+Users can verify an executable or ZIP with:
+
+```powershell
+Get-FileHash .\bad_apple.exe -Algorithm SHA256
+Get-FileHash .\bad-apple-windows-v1.1.0.zip -Algorithm SHA256
+```
+
+Compare with `SHA256SUMS`. Linux/macOS can use `sha256sum -c SHA256SUMS`
+when both files are present. GitHub Actions also packages each successful build
+as a workflow artifact; publishing a release is a separate, explicit step.

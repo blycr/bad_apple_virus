@@ -1,118 +1,92 @@
-# Bad Apple but it's a Windows virus
+# Bad Apple Windows Player
 
-A high-performance (I've never seen _anything_ like this run in realtime before)
-rendition of Bad Apple, using Windows windows as the video surface.
+用真实的 Windows 窗口播放 Bad Apple。`bad_apple_virus` 与 `bad_apple_win`
+现已合并：一个项目、一份素材、一个 `bad_apple.exe`，保留两种窗口外观。
 
-It's not _actually_ a virus, but it is reminiscent of the viruses of old that
-were more of a nuisance than anything.
+## 下载与播放
 
-Video demonstration:
+在 [GitHub Releases](https://github.com/blycr/bad_apple_virus/releases/latest)
+下载并解压发布包。双击 `bad_apple.exe` 或 `Play.cmd` 即可播放；
+双击 `Play-Windows.cmd` 可使用标题栏窗口模式。音频和动画已嵌入程序，
+不需要另外下载视频或安装 Rust。
 
-[![Flandre Scarlet made out of windows](https://img.youtube.com/vi/EZpZwunMzuE/0.jpg)](https://www.youtube.com/watch?v=EZpZwunMzuE)
+| 模式 | 启动方式 | 效果 |
+| --- | --- | --- |
+| 无边框（默认） | `bad_apple.exe` | 白色窗口拼接画面，自动提供黑色背景 |
+| 标题栏窗口 | `bad_apple.exe --mode windows` | 大块带标题栏，小块保持无边框以避免越界 |
 
-> **Heads-up**: this version draws the *white* parts of the video as windows
-> over your desktop, so the desktop needs to be **black** (a solid black
-> wallpaper) for the picture to read. If you can't change the wallpaper, or
-> you run a high-DPI/remote setup, use the **`rewrite`** branch instead:
-> it is a self-contained rewrite that paints its own black backdrop and works
-> on any wallpaper.
+两种模式均在主显示器播放，保持 4:3 比例，支持高 DPI，不依赖桌面壁纸。
+播放时使用原始 **64×48、30 fps** 矩形素材，最多创建 **155 个画面窗口**，
+另加一个背景窗口。不会自动细分或生成几百个额外窗口。
 
-## Maintenance update (2026): why the picture was garbage, and what was fixed
+## 控制
 
-On modern toolchains and on machines like this one (Windows 10/11, 125% DPI,
-virtual/remote audio drivers, non-black wallpaper), the original binary
-rendered **no coherent picture at all** — no shapes, no video. Four compounding
-root causes were found:
+| 快捷键 | 操作 |
+| --- | --- |
+| **Ctrl+Alt+F8** | 同时暂停或继续画面和音频 |
+| **Ctrl+Alt+F9** | 退出并释放窗口、音频和快捷键 |
 
-1. **The `Option<WinCoords>` niche trick is not portable across rustc
-   versions — the fatal one.** The original reinterpreted `boxes.bin` as a
-   slice of `Option<WinCoords>`, relying on `#[repr(packed)]` keeping the
-   fields in declaration order. The compiler is free to reorder fields when it
-   applies the niche optimization, and modern rustc produces `[w, h, x, y]`
-   instead of `[x, y, w, h]`. Measured behaviour: the bytes `[0,1,2,3]` — a
-   perfectly valid box with `x=0` — decode as `None` (a frame separator), so
-   every frame lost its left column and the whole box stream was misaligned;
-   window sizes and positions became garbage (e.g. windows with `x` stuck at 1
-   and zero-height rects). The original happened to work on the author's older
-   compiler purely by luck of the layout. Fix: `#[repr(C)]` — a single
-   attribute that fixes the layout in declaration order while keeping the
-   4-byte `Option<WinCoords>` and the free `None` discriminant.
+快捷键无需窗口焦点，只在运行期间注册，长按不会重复切换。
+若快捷键已被其他程序占用，播放器提示并退出；请先关闭另一个播放器。
+标题栏模式也可点击任意窗口的关闭按钮退出整个播放器。
 
-2. **The audio clock is unreliable in virtual-audio environments.** The frame
-   timeline used to be driven by kira/cpal's audio clock. On this machine
-   (virtual audio device) that clock advanced at random speeds — the video
-   could sit on the first frames for 25+ seconds. Fix: drive the 30 fps
-   timeline from a wall clock (`std::time::Instant`); audio still plays, it
-   just no longer clocks the video.
+```powershell
+.\bad_apple.exe --mode borderless
+.\bad_apple.exe --mode windows
+.\bad_apple.exe --mute
+.\bad_apple.exe --help
+.\bad_apple.exe --version
+```
 
-3. **Video start was delayed by audio initialization.** The virtual audio
-   device took 0–5 seconds (varying per run) to initialize, and the timeline
-   was started *after* it, so the video began late. Fix: the wall-clock
-   reference is taken before audio initialization, and audio is best-effort —
-   the video keeps playing even if the audio device is missing or broken.
+## 从源码构建
 
-4. **Windows kept stale surfaces instead of repainting.** `SWP_NOREDRAW` on a
-   *resized* window keeps the window's stale old-size surface on modern
-   Windows/DWM, freezing the picture into the previous frame's rectangles (in
-   the rewrite this showed up as windows painting only their creation-size
-   "sliver"). Fix: `SWP_NOREDRAW` is now used only for pure moves (where it is
-   still a real win); resizes and show/hide transitions repaint as usual. The
-   fills are solid, so the extra repaints are cheap.
+需要 Windows 10/11、Rust stable，以及 Visual Studio 的 C++ 构建工具和
+Windows SDK（用于 MSVC 链接和图标资源）。在项目根目录运行：
 
-Plus one display-fit fix:
+```powershell
+cargo build --locked --release
+.\target\release\bad_apple.exe
+.\target\release\bad_apple.exe --mode windows
+```
 
-- The source video is 4:3. The original code stretched it to fill the work
-  area (two independent per-axis ratios), which distorts the picture on 16:9
-  screens. It now uses a single cell size (the smaller fit) and centers the
-  content, preserving the 4:3 aspect with letterbox bars on wide screens.
+项目根目录的两个 `.cmd` 入口也支持启动本地 `target\release` 中的程序。
 
-## Why is it so performant?
+## 维护与验证
 
-- `DeferWindowPos` - even the most naive of projects can go from 1fps to 15fps
-  by using this wonderful batched API instead of `SetWindowPos`.
-- `WS_EX_TOOLWINDOW` to remove the taskbar entry
-- Only showing/hiding/moving windows that actually need it (dirty tracking)
-- Rust is *blazing fast*, don't you know?
+渲染、音频时间线、快捷键和素材解析分别位于 `src/renderer.rs`、
+`src/playback.rs`、`src/controls.rs` 与 `src/video.rs`。
+两种模式共用同一套逻辑，不再维护两份播放器。
 
-## Could it be faster?
+```powershell
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+cargo run --locked --release --example audio_probe -- 12
+cargo run --locked --release --example pause_probe
+```
 
-I suspect that choosing which windows to move/resize, such that each is resized
-as little as possible, can increase performance - currently, the windows are just
-used from largest to smallest, which can result in some location jitter as they
-fit into different indexes.
+两个音频探针需要真实音频设备，以零音量运行，不弹出播放窗口。
+测试覆盖素材边界与窗口上限、分数缩放下的共享边缘、音频启动延迟、
+播放停顿与故障回退、长时间暂停以及命令行模式选择。
+GitHub Actions 在 Windows 上检查格式、Clippy、测试和发布构建，并生成下载包。
 
-## Future work
+画面跟随实际音频播放位置；无音频设备或音频故障时，从当前位置继续静音播放。
+窗口变大、重新显示或切换标题栏后立即重绘，避免连续白色区域出现黑洞。
+纯移动复用已绘制表面，以控制重绘开销。
+详见 [SYNC_FIX.md](SYNC_FIX.md)、[RENDER_FIX.md](RENDER_FIX.md)
+和 [RELEASING.md](RELEASING.md)。
 
-All of these I have done already in small tests, but they're both difficult to
-make performant (copy dialogs are particularly slow), and difficult to arrange
-into a pleasing display.
+## 合并与旧项目
 
-- Spawning `MessageBoxA` windows and taking their handle (thus avoiding the need
-to replicate the layout of `MessageBoxA` for each version of Windows you run
-on)
-- Spawning Vista file copy dialogs using `IProgressDialog`
-- Arranging windows in rolling sine waves, circles, etc
+从 **v1.1.0** 起，只维护此仓库的 `main` 分支和 `bad_apple.exe`。
+旧的 `bad_apple_win` 独立项目已废弃，其功能由默认无边框模式接替。
+`rewrite` 分支和旧 Releases 仅保留历史记录，不作为当前构建入口。
+此前的 `bad_apple_win.exe` 请替换为新的 `bad_apple.exe`。
 
-All of these I have not tried yet, but would be great additions:
-- Water physics using hundreds of scroll bars
-- Basic hard-body physics between windows
-- Error noises synced with the audio (could just pre-render...)
-- Notification bubbles
-- Windows in the taskbar to show text (if the user has large taskbar buttons
-  enabled)
-- A large variety of error messages to delight the user with
+## 来源
 
-## Building and such
+基于 [mon/bad_apple_virus](https://github.com/mon/bad_apple_virus)，
+保留原项目的 MIT 许可与版权声明。仓库名称沿用原项目；程序是窗口动画播放器。
+`bad apple.py` 是原始视频预处理脚本，播放与构建现有素材不需要运行它。
 
-Should be fine to just `cargo build --release`.
-
-Look at `bad apple.py` for the pre-processing to take an input video and turn it
-into `boxes.bin`, a space-optimized representation of the window bounds for each
-frame. The script is jank, don't come complaining.
-
-Check the PRs for some forks that improve the python script to be easier to run.
-
-## Why's the repo archived?
-
-I simply don't have the bandwidth to respond to questions and merge PRs for this little
-project I threw out into the world. Feel free to fork it and make it do cool things!
+原项目演示：[Bad Apple rendered with Windows windows](https://www.youtube.com/watch?v=EZpZwunMzuE)。
